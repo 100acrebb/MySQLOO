@@ -3,6 +3,7 @@
 #include "IQuery.h"
 #include "PreparedQuery.h"
 #include "Logger.h"
+#include "Transaction.h"
 #include <string>
 #include <cstring>
 #include <iostream>
@@ -16,6 +17,7 @@ LuaObjectBase(state, TYPE_DATABASE), database(database), host(host), username(us
 	registerFunction(state, "prepare", Database::prepare);
 	registerFunction(state, "escape", Database::escape);
 	registerFunction(state, "query", Database::query);
+	registerFunction(state, "createTransaction", Database::createTransaction);
 	registerFunction(state, "connect", Database::connect);
 	registerFunction(state, "abortAllQueries", Database::abortAllQueries);
 	registerFunction(state, "wait", Database::wait);
@@ -72,6 +74,17 @@ int Database::prepare(lua_State* state)
 	return 1;
 }
 
+/* Creates and returns a PreparedQuery instance and enqueues it into the queue of accepted queries.
+*/
+int Database::createTransaction(lua_State* state)
+{
+	LOG_CURRENT_FUNCTIONCALL
+	Database* object = (Database*)unpackSelf(state, TYPE_DATABASE);
+	Transaction* transactionObject = new Transaction(object, state);
+	transactionObject->pushTableReference(state);
+	return 1;
+}
+
 /* Enqueues a query into the queue of accepted queries.
  */
 void Database::enqueueQuery(IQuery* query)
@@ -108,10 +121,10 @@ int Database::abortAllQueries(lua_State* state)
 	LOG_CURRENT_FUNCTIONCALL
 	Database* object = (Database*)unpackSelf(state, TYPE_DATABASE);
 	std::lock_guard<std::mutex> lock(object->m_queryQueueMutex);
-	for (auto i = object->queryQueue.begin(); i != object->queryQueue.end(); i++)
+	for (auto& query : object->queryQueue)
 	{
-		(*i)->m_status = QUERY_ABORTED;
-		(*i)->unreference(state);
+		query->m_status = QUERY_ABORTED;
+		query->unreference(state);
 	}
 	LUA->PushNumber((double)object->queryQueue.size());
 	object->queryQueue.clear();
@@ -144,7 +157,7 @@ int Database::escape(lua_State* state)
 	Database* object = (Database*)unpackSelf(state, TYPE_DATABASE);
 	std::lock_guard<std::mutex>(object->m_connectMutex);
 	//No query mutex needed since this doesn't use the connection at all
-	if (!object->m_connectionDone || object->m_sql == NULL) return 0;
+	if (!object->m_connectionDone || object->m_sql == nullptr) return 0;
 	LUA->CheckType(2, GarrysMod::Lua::Type::STRING);
 	const char* sQuery = LUA->GetString(2);
 	size_t nQueryLength = strlen(sQuery);
@@ -267,8 +280,8 @@ void Database::connectRun()
 	{
 		auto connectionSignaliser = finally([&] { m_connectWakeupVariable.notify_one(); });
 		std::lock_guard<std::mutex>(this->m_connectMutex);
-		this->m_sql = mysql_init(NULL);
-		if (this->m_sql == NULL)
+		this->m_sql = mysql_init(nullptr);
+		if (this->m_sql == nullptr)
 		{
 			m_success = false;
 			m_connection_err = "Out of memory";
@@ -281,9 +294,10 @@ void Database::connectRun()
 			my_bool reconnect = 1;
 			mysql_options(this->m_sql, MYSQL_OPT_RECONNECT, &reconnect);
 		}
-		const char* socket = (this->socket.length() == 0) ? NULL : this->socket.c_str();
+		const char* socket = (this->socket.length() == 0) ? nullptr : this->socket.c_str();
 		unsigned long clientFlag = (this->useMultiStatements) ? CLIENT_MULTI_STATEMENTS : 0;
-		if (mysql_real_connect(this->m_sql, this->host.c_str(), this->username.c_str(), this->pw.c_str(), this->database.c_str(), this->port, socket, clientFlag) != this->m_sql)
+		if (mysql_real_connect(this->m_sql, this->host.c_str(), this->username.c_str(), this->pw.c_str(), 
+			this->database.c_str(), this->port, socket, clientFlag) != this->m_sql)
 		{
 			m_success = false;
 			m_connection_err = mysql_error(this->m_sql);
@@ -299,7 +313,7 @@ void Database::connectRun()
 		m_serverInfo = mysql_get_server_info(this->m_sql);
 		m_hostInfo = mysql_get_host_info(this->m_sql);
 	}
-	auto closeConnection = finally([&] { mysql_close(this->m_sql); this->m_sql = NULL;  });
+	auto closeConnection = finally([&] { mysql_close(this->m_sql); this->m_sql = nullptr;  });
 	if (m_success)
 	{
 		run();
