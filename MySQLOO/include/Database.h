@@ -18,10 +18,10 @@ class DatabaseThread;
 class ConnectThread;
 enum DatabaseStatus
 {
-	DATABASE_NOT_CONNECTED = 0,
-	DATABASE_CONNECTING,
-	DATABASE_CONNECTED,
-	DATABASE_CONNECTION_FAILED,
+	DATABASE_CONNECTED = 0,
+	DATABASE_CONNECTING = 1,
+	DATABASE_NOT_CONNECTED = 2,
+	DATABASE_CONNECTION_FAILED = 3
 };
 
 class Database : LuaObjectBase
@@ -56,6 +56,7 @@ private:
 	static int queueSize(lua_State* state);
 	static int setAutoReconnect(lua_State* state);
 	static int setMultiStatements(lua_State* state);
+	static int ping(lua_State* state);
 	std::deque<std::shared_ptr<IQuery>> finishedQueries;
 	std::deque<std::shared_ptr<IQuery>> queryQueue;
 	MYSQL* m_sql;
